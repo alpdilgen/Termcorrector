@@ -1,501 +1,294 @@
 import streamlit as st
-
-# FIRST AND ONLY PAGE CONFIG
-st.set_page_config(page_title="Universal Term Corrector", page_icon="🌍", layout="wide")
-
 import tempfile
 import os
 import json
 import pandas as pd
 from datetime import datetime
+import logging
 
-def main():
-    st.title("🌍 Universal Term Corrector")
-    st.markdown("**AI destekli çok dilli terim düzeltme sistemi - FORCE MODE**")
-    
-    # Initialize session state
-    if 'terms' not in st.session_state:
-        st.session_state.terms = []
-    if 'corrector' not in st.session_state:
-        st.session_state.corrector = None
-    if 'uploaded_file' not in st.session_state:
-        st.session_state.uploaded_file = None
-    if 'processing_results' not in st.session_state:
-        st.session_state.processing_results = None
-    
-    # Check if corrector module exists
-    corrector_available = False
-    import_status = ""
-    
-    try:
-        from universal_term_corrector import UniversalTermCorrectorForce, TermCorrection, FileFormatInfo
-        corrector_available = True
-        import_status = "✅ Corrector modülü başarıyla yüklendi!"
-    except ImportError as e:
-        import_status = f"❌ Import hatası: {str(e)}"
-    
-    # Sidebar
-    with st.sidebar:
-        st.header("⚙️ Yapılandırma")
-        
-        # Show status
-        if corrector_available:
-            st.success(import_status)
-        else:
-            st.error(import_status)
-            with st.expander("🔍 Debug Bilgileri"):
-                if os.path.exists("universal_term_corrector.py"):
-                    st.info("📁 universal_term_corrector.py dosyası mevcut")
-                    try:
-                        with open("universal_term_corrector.py", "r", encoding="utf-8") as f:
-                            content = f.read()
-                        st.write(f"📏 Dosya boyutu: {len(content)} karakter")
-                        
-                        # Show first few lines
-                        lines = content.split('\n')[:10]
-                        st.write("**İlk 10 satır:**")
-                        for i, line in enumerate(lines, 1):
-                            st.code(f"{i:2d}: {line}")
-                            
-                    except Exception as e:
-                        st.error(f"Dosya okunamadı: {e}")
-                else:
-                    st.error("📁 universal_term_corrector.py dosyası bulunamadı")
-                    st.write("**Mevcut Python dosyaları:**")
-                    for file in os.listdir("."):
-                        if file.endswith('.py'):
-                            st.write(f"- {file}")
-        
-        # API Key section
-        st.subheader("🔑 API Anahtarı")
-        api_key = st.text_input("Claude API Anahtarı", type="password")
-        
-        if api_key and corrector_available:
-            try:
-                if st.session_state.corrector is None:
-                    st.session_state.corrector = UniversalTermCorrectorForce(api_key)
-                st.success("✅ Corrector başlatıldı!")
-            except Exception as e:
-                st.error(f"❌ Corrector başlatılamadı: {e}")
-        elif api_key:
-            st.warning("API anahtarı girildi ama corrector modülü yok")
-    
-    # Main content
-    if not corrector_available:
-        st.error("❌ Universal Term Corrector modülü yüklenemedi.")
-        st.info("🔧 Lütfen universal_term_corrector.py dosyasının doğru yüklendiğinden emin olun.")
-        return
-    
-    if not st.session_state.corrector:
-        st.warning("⚠️ Devam etmek için lütfen Claude API anahtarınızı yan çubuktan girin.")
-        return
-    
-    # Main tabs
-    tab1, tab2, tab3, tab4 = st.tabs(["📁 Dosya Yükleme", "🔤 Çoklu Terim Yönetimi", "🚀 İşleme", "📊 Sonuçlar"])
-    
-    with tab1:
-        st.header("📁 Dosya Yükleme ve Format Tespiti")
-        
-        uploaded_file = st.file_uploader(
-            "XLIFF dosyası seçin",
-            type=['sdlxliff', 'mqxliff', 'xliff', 'xlf', 'xml'],
-            help="SDL XLIFF, MemoQ XLIFF veya standart XLIFF dosyaları yükleyin"
-        )
-        
-        if uploaded_file:
-            st.session_state.uploaded_file = uploaded_file
-            st.success(f"✅ Dosya yüklendi: {uploaded_file.name}")
-            
-            # Save to temp file and detect format
-            with tempfile.NamedTemporaryFile(delete=False, suffix=f".{uploaded_file.name.split('.')[-1]}") as tmp_file:
-                tmp_file.write(uploaded_file.getvalue())
-                tmp_path = tmp_file.name
-            
-            try:
-                corrector = st.session_state.corrector
-                format_info = corrector.detect_bilingual_format(tmp_path)
-                
-                # Display format information
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    st.metric("📋 Format", f"{format_info.format_type.upper()}")
-                    st.caption(f"Versiyon: {format_info.version}")
-                
-                with col2:
-                    st.metric("🔧 Yapı", format_info.structure_type.replace('_', ' ').title())
-                
-                with col3:
-                    st.metric("✨ Özellikler", len(format_info.special_features))
-                
-                if format_info.special_features:
-                    st.write("**Özel Özellikler:**")
-                    for feature in format_info.special_features:
-                        st.write(f"• {feature.replace('_', ' ').title()}")
-                
-                # Try to detect languages
-                source_lang, target_lang = corrector.detect_languages_from_universal_format(tmp_path)
-                if source_lang and target_lang:
-                    st.info(f"🌐 Tespit edilen diller: {source_lang.upper()} → {target_lang.upper()}")
-                
-            except Exception as e:
-                st.error(f"❌ Format tespitinde hata: {e}")
-            finally:
-                os.unlink(tmp_path)
-    
-    with tab2:
-        st.header("🔤 Çoklu Terim Yönetimi")
-        st.markdown("**FORCE MODE**: Tüm terimler otomatik olarak düzeltilecek!")
-        
-        # Language selection
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            source_lang = st.selectbox(
-                "Kaynak Dil",
-                options=['en', 'de', 'fr', 'es', 'it', 'tr', 'ru', 'bg', 'ro', 'pl', 'cs', 'sk', 'hr', 'sl', 'hu'],
-                index=0,
-                key='source_lang'
-            )
-        
-        with col2:
-            target_lang = st.selectbox(
-                "Hedef Dil",
-                options=['en', 'de', 'fr', 'es', 'it', 'tr', 'ru', 'bg', 'ro', 'pl', 'cs', 'sk', 'hr', 'sl', 'hu'],
-                index=5,  # Turkish as default
-                key='target_lang'
-            )
-        
-        # Add new term form
-        st.subheader("➕ Yeni Terim Ekle")
-        with st.form("add_term_form"):
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                source_term = st.text_input(
-                    f"🔍 {source_lang.upper()} Terimi",
-                    placeholder="Değiştirilecek terim..."
-                )
-            
-            with col2:
-                target_term = st.text_input(
-                    f"✏️ {target_lang.upper()} Karşılığı",
-                    placeholder="Yeni terim..."
-                )
-            
-            description = st.text_input(
-                "📋 Açıklama (opsiyonel)",
-                placeholder="Bu düzeltme hakkında notlar..."
-            )
-            
-            submitted = st.form_submit_button("➕ Terim Ekle", use_container_width=True)
-            
-            if submitted:
-                if source_term and target_term:
-                    # Create TermCorrection object
-                    new_term = {
-                        'source_term': source_term,
-                        'target_term': target_term,
-                        'source_language': source_lang,
-                        'target_language': target_lang,
-                        'description': description,
-                        'term_id': len(st.session_state.terms) + 1
-                    }
-                    
-                    st.session_state.terms.append(new_term)
-                    st.success(f"✅ Eklendi: '{source_term}' → '{target_term}'")
-                    st.rerun()
-                else:
-                    st.error("❌ Hem kaynak hem hedef terim gerekli!")
-        
-        # Display existing terms
-        if st.session_state.terms:
-            st.subheader(f"📋 Kayıtlı Terimler ({len(st.session_state.terms)} adet)")
-            
-            # Create a dataframe for better display
-            terms_data = []
-            for i, term in enumerate(st.session_state.terms):
-                terms_data.append({
-                    'ID': term['term_id'],
-                    'Kaynak': term['source_term'],
-                    'Hedef': term['target_term'],
-                    'Dil Çifti': f"{term['source_language']} → {term['target_language']}",
-                    'Açıklama': term['description'] or "Yok"
-                })
-            
-            df = pd.DataFrame(terms_data)
-            st.dataframe(df, use_container_width=True)
-            
-            # Bulk operations
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                if st.button("🗑️ Tümünü Temizle", type="secondary"):
-                    st.session_state.terms = []
-                    st.rerun()
-            
-            with col2:
-                # Export terms as JSON
-                if st.button("📤 Export JSON"):
-                    terms_json = json.dumps(st.session_state.terms, indent=2, ensure_ascii=False)
-                    st.download_button(
-                        label="💾 İndir",
-                        data=terms_json,
-                        file_name=f"terms_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                        mime="application/json"
-                    )
-            
-            with col3:
-                # Import terms
-                uploaded_terms = st.file_uploader("📥 JSON Import", type=['json'], key="import_terms")
-                if uploaded_terms:
-                    try:
-                        imported_terms = json.loads(uploaded_terms.getvalue().decode('utf-8'))
-                        st.session_state.terms.extend(imported_terms)
-                        st.success(f"✅ {len(imported_terms)} terim import edildi!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ Import hatası: {e}")
-            
-            # Individual term removal
-            st.subheader("🔧 Terim Düzenleme")
-            for i, term in enumerate(st.session_state.terms):
-                with st.expander(f"Terim {term['term_id']}: {term['source_term']} → {term['target_term']}"):
-                    col1, col2 = st.columns([3, 1])
-                    
-                    with col1:
-                        st.write(f"**Kaynak:** {term['source_term']}")
-                        st.write(f"**Hedef:** {term['target_term']}")
-                        st.write(f"**Diller:** {term['source_language']} → {term['target_language']}")
-                        if term['description']:
-                            st.write(f"**Açıklama:** {term['description']}")
-                    
-                    with col2:
-                        if st.button(f"🗑️ Sil", key=f"delete_{i}"):
-                            st.session_state.terms.pop(i)
-                            st.rerun()
-        
-        else:
-            st.info("📝 Henüz terim eklenmedi. Yukarıdaki formu kullanarak terim ekleyin.")
-    
-    with tab3:
-        st.header("🚀 FORCE MODE İşleme")
-        
-        # Prerequisites check
-        prerequisites = [
-            ("API Anahtarı", st.session_state.corrector is not None),
-            ("Dosya Yüklendi", st.session_state.uploaded_file is not None),
-            ("Terim Var", len(st.session_state.terms) > 0)
-        ]
-        
-        # Display status
-        col1, col2, col3 = st.columns(3)
-        for i, (name, status) in enumerate(prerequisites):
-            with [col1, col2, col3][i]:
-                if status:
-                    st.success(f"✅ {name}")
-                else:
-                    st.error(f"❌ {name}")
-        
-        all_ready = all(status for _, status in prerequisites)
-        
-        if all_ready:
-            st.success("🎉 Tüm gereksinimler karşılandı!")
-            
-            # Show processing summary
-            st.subheader("📋 İşleme Özeti")
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.metric("📁 Dosya", st.session_state.uploaded_file.name)
-                st.metric("🔤 Terim Sayısı", len(st.session_state.terms))
-            
-            with col2:
-                st.metric("🌐 Dil Çiftleri", len(set(f"{t['source_language']}-{t['target_language']}" for t in st.session_state.terms)))
-                st.metric("💪 Mod", "FORCE")
-            
-            # Processing button
-            if st.button("🚀 FORCE MODE İşlemeyi Başlat", type="primary", use_container_width=True):
-                process_file_with_terms()
-        
-        else:
-            st.warning("⚠️ Lütfen tüm gereksinimleri karşılayın:")
-            for name, status in prerequisites:
-                if not status:
-                    st.write(f"• {name} eksik")
-    
-    with tab4:
-        st.header("📊 İşleme Sonuçları")
-        
-        if st.session_state.processing_results:
-            results = st.session_state.processing_results
-            
-            # Summary metrics
-            col1, col2, col3, col4 = st.columns(4)
-            
-            with col1:
-                st.metric("💪 Düzeltme", results['corrections_made'])
-            
-            with col2:
-                st.metric("📊 Toplam Birim", results.get('total_units', 0))
-            
-            with col3:
-                instances = results.get('instances_found', 0)
-                coverage = (results['corrections_made'] / max(1, instances)) * 100
-                st.metric("📈 Kapsam", f"{coverage:.1f}%")
-            
-            with col4:
-                if results.get('detailed_results'):
-                    avg_quality = sum(r.quality_score for r in results['detailed_results']) / len(results['detailed_results'])
-                    st.metric("🎯 Kalite", f"{avg_quality:.1%}")
-            
-            # Download section
-            st.subheader("📥 İndirmeler")
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                if results.get('corrected_content'):
-                    original_name = st.session_state.uploaded_file.name
-                    name_parts = original_name.rsplit('.', 1)
-                    corrected_name = f"{name_parts[0]}_corrected.{name_parts[1]}" if len(name_parts) == 2 else f"{original_name}_corrected"
-                    
-                    st.download_button(
-                        label="📥 Düzeltilmiş Dosyayı İndir",
-                        data=results['corrected_content'].encode('utf-8'),
-                        file_name=corrected_name,
-                        mime="application/xml"
-                    )
-            
-            with col2:
-                # Generate report
-                report_data = {
-                    "metadata": {
-                        "timestamp": datetime.now().isoformat(),
-                        "file": st.session_state.uploaded_file.name,
-                        "force_mode": True
-                    },
-                    "corrections": results['corrections_made'],
-                    "terms_used": st.session_state.terms,
-                    "statistics": results.get('stats', {})
-                }
-                
-                report_json = json.dumps(report_data, indent=2, ensure_ascii=False)
-                
-                st.download_button(
-                    label="📊 İşleme Raporu İndir",
-                    data=report_json,
-                    file_name=f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                    mime="application/json"
-                )
-            
-            # Detailed results
-            if results.get('detailed_results'):
-                st.subheader("📝 Detaylı Sonuçlar")
-                
-                detailed_data = []
-                for result in results['detailed_results']:
-                    detailed_data.append({
-                        'Birim ID': result.unit_id,
-                        'Düzeltmeler': ', '.join(result.applied_corrections),
-                        'Kalite': f"{result.quality_score:.1%}",
-                        'Güven': f"{result.confidence:.1%}"
-                    })
-                
-                if detailed_data:
-                    df_detailed = pd.DataFrame(detailed_data)
-                    st.dataframe(df_detailed, use_container_width=True)
-            
-            # Statistics
-            if results.get('stats'):
-                with st.expander("📈 İstatistikler"):
-                    st.json(results['stats'])
-        
-        else:
-            st.info("📝 Henüz işleme yapılmadı. İşleme sekmesinde dosyayı işleyin.")
+# --- PAGE CONFIG ---
+st.set_page_config(page_title="Ultimate Term Corrector V8", page_icon="🚀", layout="wide")
+
+# --- IMPORT BACKEND ---
+# This section tries to import the main class from the backend script.
+# Ensure your backend file is named 'ultimate_term_corrector.py'
+try:
+    from ultimate_term_corrector import UltimateTermCorrectorV8, TermCorrection
+    CORRECTOR_AVAILABLE = True
+except ImportError as e:
+    st.error(f"Fatal Error: Could not import the backend script. Make sure 'ultimate_term_corrector.py' is in the same folder. Details: {e}")
+    CORRECTOR_AVAILABLE = False
+    st.stop()
+
+# --- HELPER FUNCTIONS ---
+
+def initialize_session_state():
+    """Initializes session state variables if they don't exist."""
+    defaults = {
+        'terms': [],
+        'corrector': None,
+        'uploaded_file_info': None,
+        'processing_results': None,
+        'force_mode': False,
+        'logger': None,
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
 
 def process_file_with_terms():
-    """Process the uploaded file with all terms"""
-    
-    # Show progress
+    """Main function to orchestrate the file processing."""
     progress_container = st.container()
     with progress_container:
-        st.info("🔄 İşleme başlatılıyor...")
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-    
+        st.info("🔄 Processing started...")
+        progress_bar = st.progress(0, text="Initializing...")
+
     try:
         # Save uploaded file temporarily
-        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{st.session_state.uploaded_file.name.split('.')[-1]}") as tmp_file:
-            tmp_file.write(st.session_state.uploaded_file.getvalue())
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(st.session_state.uploaded_file_info['name'])[-1]) as tmp_file:
+            tmp_file.write(st.session_state.uploaded_file_info['bytes'])
             tmp_path = tmp_file.name
-        
-        status_text.text("🔍 Dosya formatı analiz ediliyor...")
-        progress_bar.progress(10)
+
+        progress_bar.progress(10, text="File saved. Preparing corrector...")
         
         corrector = st.session_state.corrector
         
-        # Clear previous term corrections and add current ones
-        corrector.term_corrections = []
+        # Load terms into the corrector instance
+        corrector.term_corrections = [
+            TermCorrection(**term_data) for term_data in st.session_state.terms
+        ]
         
-        # Import TermCorrection class
-        from universal_term_corrector import TermCorrection
+        progress_bar.progress(30, text=f"🚀 Starting V8 process (Mode: {'Forced' if corrector.force_mode else 'AI-Evaluated'})...")
         
-        # Convert session terms to TermCorrection objects
-        for term_data in st.session_state.terms:
-            term_correction = TermCorrection(
-                source_term=term_data['source_term'],
-                target_term=term_data['target_term'],
-                source_language=term_data['source_language'],
-                target_language=term_data['target_language'],
-                description=term_data['description'],
-                term_id=term_data['term_id']
-            )
-            corrector.term_corrections.append(term_correction)
+        # Run the main processing method from the backend
+        corrections_made, detailed_results = corrector.process_file_v8(tmp_path, st.session_state.logger)
         
-        status_text.text(f"🚀 FORCE MODE: {len(corrector.term_corrections)} terim ile işleniyor...")
-        progress_bar.progress(30)
+        progress_bar.progress(80, text="📊 Preparing results...")
         
-        # Setup logging
-        import logging
-        logger = logging.getLogger('streamlit_corrector')
-        logger.setLevel(logging.INFO)
-        
-        # Process the file
-        corrections_made, detailed_results = corrector.process_xliff_file(tmp_path, logger)
-        
-        progress_bar.progress(80)
-        status_text.text("📊 Sonuçlar hazırlanıyor...")
-        
-        # Read corrected file
+        # Read the corrected file content for download
         with open(tmp_path, 'r', encoding='utf-8') as f:
             corrected_content = f.read()
         
-        # Store results
+        # Store results in session state for the results tab
         st.session_state.processing_results = {
             'corrections_made': corrections_made,
             'detailed_results': detailed_results,
             'corrected_content': corrected_content,
             'stats': corrector.processing_stats,
-            'total_units': corrector.processing_stats.get('total_units', 0),
-            'instances_found': corrector.processing_stats.get('instances_found', 0)
         }
         
-        progress_bar.progress(100)
-        status_text.text("✅ İşlem tamamlandı!")
-        
-        # Show success message
-        st.success(f"🎉 İşlem başarıyla tamamlandı! {corrections_made} düzeltme yapıldı.")
-        
-        # Clean up
-        os.unlink(tmp_path)
-        
-        # Switch to results tab
-        st.info("📊 Sonuçları görüntülemek için 'Sonuçlar' sekmesine geçin.")
+        progress_bar.progress(100, text="✅ Process complete!")
+        st.success(f"🎉 Process finished! {corrections_made} corrections were applied.")
+        st.info("📊 View the 'Results' tab to see details and download your files.")
         
     except Exception as e:
-        st.error(f"❌ İşleme sırasında hata: {str(e)}")
-        progress_bar.progress(0)
-        status_text.text("❌ İşlem başarısız")
+        st.error(f"❌ A critical error occurred during processing: {str(e)}")
+        st.code(traceback.format_exc())
+    finally:
+        if 'tmp_path' in locals() and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
+# --- MAIN APP LAYOUT ---
+
+def main():
+    st.title("🚀 Ultimate Term Corrector V8")
+    st.markdown("#### AI-Powered Terminology Correction with Selectable Processing Modes")
+    
+    initialize_session_state()
+
+    # --- SIDEBAR ---
+    with st.sidebar:
+        st.header("⚙️ Configuration")
+        st.success("✅ Backend module loaded successfully!")
+        
+        # API Key
+        api_key = st.text_input("🔑 Claude API Key", type="password", help="Your API key is required to run the corrector.")
+        
+        # Processing Mode Selection
+        mode_choice = st.radio(
+            "⚙️ Select Processing Mode",
+            ('AI-Evaluated', 'Forced Replacement'),
+            index=0,
+            help="**AI-Evaluated:** Corrects terms only where linguistically necessary. **Forced Replacement:** Replaces every instance of a term, ensuring strict adherence to terminology lists."
+        )
+        st.session_state.force_mode = (mode_choice == 'Forced Replacement')
+
+        # Initialize Corrector
+        if api_key:
+            if st.session_state.corrector is None:
+                try:
+                    # Pass the force_mode selection during instantiation
+                    st.session_state.corrector = UltimateTermCorrectorV8(api_key, force_mode=st.session_state.force_mode)
+                    st.session_state.logger = st.session_state.corrector.setup_logging()
+                    st.success("✅ Corrector initialized!")
+                except Exception as e:
+                    st.error(f"❌ Corrector could not be initialized: {e}")
+        else:
+            st.warning("Please enter your API key to activate the application.")
+
+    # Stop if corrector is not ready
+    if not st.session_state.corrector:
+        st.info("⚠️ Please enter your API key in the sidebar to begin.")
+        return
+
+    # --- MAIN TABS ---
+    tab1, tab2, tab3, tab4 = st.tabs(["📁 File Upload", "🔤 Term Management", "🚀 Process", "📊 Results"])
+
+    with tab1:
+        st.header("📁 File Upload & Analysis")
+        uploaded_file = st.file_uploader(
+            "Select a bilingual file",
+            type=['xliff', 'xlf', 'xml', 'sdlxliff', 'mqxliff'],
+            help="Upload a standard XLIFF, SDLXLIFF, or MQXLIFF file."
+        )
+        
+        if uploaded_file:
+            st.session_state.uploaded_file_info = {
+                'name': uploaded_file.name,
+                'bytes': uploaded_file.getvalue()
+            }
+            st.success(f"✅ File received: **{uploaded_file.name}**")
+            
+            with st.spinner("Analyzing file format and languages..."):
+                with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[-1]) as tmp_file:
+                    tmp_file.write(uploaded_file.getvalue())
+                    tmp_path = tmp_file.name
+                
+                try:
+                    corrector = st.session_state.corrector
+                    format_info = corrector.format_detector.detect_format(tmp_path)
+                    source_lang, target_lang = corrector.detect_languages_with_fallback(tmp_path, st.session_state.logger)
+                    
+                    st.subheader("📋 File Analysis")
+                    col1, col2 = st.columns(2)
+                    col1.metric("Detected Format", format_info.get('type', 'N/A').upper())
+                    col2.metric("Processing Strategy", format_info.get('processing_strategy', 'N/A').replace('_', ' ').title())
+                    
+                    if source_lang and target_lang:
+                        st.info(f"🌐 **Detected Languages:** {source_lang.upper()} ➡️ {target_lang.upper()}")
+                    else:
+                        st.warning("⚠️ Could not auto-detect languages. Please set them manually in the 'Term Management' tab.")
+
+                except Exception as e:
+                    st.error(f"❌ Error during file analysis: {e}")
+                finally:
+                    os.unlink(tmp_path)
+
+    with tab2:
+        st.header("🔤 Term Management")
+        
+        col1, col2 = st.columns(2)
+        source_lang = col1.text_input("Source Language", value="en").lower()
+        target_lang = col2.text_input("Target Language", value="tr").lower()
+        
+        with st.form("add_term_form", clear_on_submit=True):
+            st.subheader("➕ Add a New Term")
+            c1, c2 = st.columns(2)
+            source_term = c1.text_input(f"🔍 Source Term ({source_lang.upper()})")
+            target_term = c2.text_input(f"✏️ Target Term ({target_lang.upper()})")
+            description = st.text_input("📋 Description (Optional)")
+            
+            if st.form_submit_button("➕ Add Term", use_container_width=True):
+                if source_term and target_term:
+                    st.session_state.terms.append({
+                        'source_term': source_term, 'target_term': target_term,
+                        'source_language': source_lang, 'target_language': target_lang,
+                        'description': description, 'term_id': len(st.session_state.terms) + 1
+                    })
+                    st.success(f"Added: '{source_term}' → '{target_term}'")
+                else:
+                    st.error("Both source and target terms are required.")
+
+        if st.session_state.terms:
+            st.subheader(f"📋 Term List ({len(st.session_state.terms)} terms)")
+            df = pd.DataFrame(st.session_state.terms)
+            st.dataframe(df[['term_id', 'source_term', 'target_term', 'description']], use_container_width=True)
+            if st.button("🗑️ Clear All Terms", type="secondary"):
+                st.session_state.terms = []
+                st.rerun()
+
+    with tab3:
+        st.header("🚀 Process File")
+        
+        prereqs = {
+            "API Key Entered": st.session_state.corrector is not None,
+            "File Uploaded": st.session_state.uploaded_file_info is not None,
+            "Terms Added": len(st.session_state.terms) > 0,
+        }
+        
+        statuses_ok = all(prereqs.values())
+        
+        st.subheader("📋 Pre-flight Check")
+        for item, status in prereqs.items():
+            st.markdown(f"- {item}: {'✅' if status else '❌'}")
+        
+        if statuses_ok:
+            st.success("Ready to process!")
+            st.markdown("---")
+            st.subheader("⚙️ Processing Summary")
+            col1, col2, col3 = st.columns(3)
+            col1.metric("📄 File Name", st.session_state.uploaded_file_info['name'])
+            col2.metric("🔤 Term Count", len(st.session_state.terms))
+            col3.metric("⚙️ Mode", "Forced" if st.session_state.force_mode else "AI-Evaluated")
+            
+            if st.button("🚀 Start Processing", type="primary", use_container_width=True):
+                process_file_with_terms()
+        else:
+            st.warning("Please complete all steps in the previous tabs to enable processing.")
+
+    with tab4:
+        st.header("📊 Results")
+        
+        if st.session_state.processing_results:
+            res = st.session_state.processing_results
+            stats = res.get('stats', {})
+            
+            st.subheader("📈 Summary Metrics")
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("🔧 Corrections Made", stats.get('corrections_made', 0))
+            c2.metric("📊 Units Processed", stats.get('units_processed', 0))
+            c3.metric("⚡ Performance Gain", f"{stats.get('performance_gain', 1.0):.1f}x")
+            c4.metric("💾 Cache Hits", stats.get('cache_hits', 0))
+            
+            st.markdown("---")
+            st.subheader("📥 Downloads")
+            c1, c2 = st.columns(2)
+            
+            original_name = st.session_state.uploaded_file_info['name']
+            name_parts = os.path.splitext(original_name)
+            corrected_name = f"{name_parts[0]}_corrected{name_parts[1]}"
+            
+            c1.download_button(
+                label="📥 Download Corrected File",
+                data=res['corrected_content'].encode('utf-8'),
+                file_name=corrected_name,
+                mime="application/xml",
+                use_container_width=True
+            )
+            
+            report_json = json.dumps(res, indent=2, ensure_ascii=False, default=str)
+            c2.download_button(
+                label="📊 Download JSON Report",
+                data=report_json,
+                file_name=f"report_{datetime.now().strftime('%Y%m%d')}.json",
+                mime="application/json",
+                use_container_width=True
+            )
+            
+            if res.get('detailed_results'):
+                st.markdown("---")
+                st.subheader("📝 Detailed Changes")
+                
+                changes = [asdict(r) for r in res['detailed_results'] if r.new_target != r.original_target]
+                if changes:
+                    df_detailed = pd.DataFrame(changes)
+                    st.dataframe(df_detailed[['unit_id', 'original_target', 'new_target', 'applied_corrections']], use_container_width=True)
+                else:
+                    st.info("No changes were applied to the file content.")
+
+        else:
+            st.info("Process a file to see the results here.")
 
 if __name__ == "__main__":
     main()
