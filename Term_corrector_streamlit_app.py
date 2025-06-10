@@ -16,7 +16,7 @@ try:
     from ultimate_term_corrector import UltimateTermCorrectorV8, TermCorrection
     CORRECTOR_AVAILABLE = True
 except ImportError as e:
-    st.error(f"Fatal Error: Could not import backend. Ensure 'ultimate_term_corrector.py' is in the same folder. Details: {e}")
+    st.error(f"Fatal Error: Could not import the backend script. Make sure 'ultimate_term_corrector.py' is in the same folder. Details: {e}")
     CORRECTOR_AVAILABLE = False
     st.stop()
 
@@ -27,7 +27,7 @@ def initialize_session_state():
     defaults = {
         'terms': [], 'corrector': None, 'uploaded_file_info': None,
         'processing_results': None, 'force_mode': False, 'logger': None,
-        'detected_source_lang': 'en', 'detected_target_lang': 'tr'
+        'detected_source_lang': None, 'detected_target_lang': None
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
@@ -47,27 +47,25 @@ def process_file_with_terms():
 
         corrector = st.session_state.corrector
         corrector.term_corrections = [TermCorrection(**term_data) for term_data in st.session_state.terms]
-
+        
+        # --- Real-time Progress Callback Logic ---
         total_terms = len(corrector.term_corrections)
-        total_batches = 0  # We will know this after preprocessing
+        
+        def progress_handler(phase, current, total):
+            if phase == 'variants':
+                # Variant generation is weighted as the first 20% of the task
+                progress = int((current / total) * 20)
+                progress_bar.progress(progress, text=f"🧠 Step 1/2: Generating term variants ({current}/{total})...")
+            elif phase == 'batches':
+                # Batch processing is the remaining 80%
+                progress = 20 + int((current / total) * 80)
+                progress_bar.progress(progress, text=f"⚙️ Step 2/2: Processing file batches ({current}/{total})...")
 
-        # Define callbacks for real-time progress updates
-        def variant_progress_callback(current, total):
-            progress = int((current / total) * 20)  # Variant generation takes up first 20%
-            progress_bar.progress(progress, text=f"🧠 Step 1/2: Generating term variants ({current}/{total})...")
-
-        def batch_progress_callback(current, total):
-            # This needs total_batches which we don't know yet. We'll handle this inside the main logic
-            progress = 20 + int((current / total) * 80) # Main processing takes up the other 80%
-            progress_bar.progress(progress, text=f"⚙️ Step 2/2: Processing file batches ({current}/{total})...")
-
-        # Create a dictionary of callbacks to pass to the backend
         callbacks = {
-            'variants': variant_progress_callback,
-            'batches': batch_progress_callback
+            'variants': lambda c, t: progress_handler('variants', c, t),
+            'batches': lambda c, t: progress_handler('batches', c, t)
         }
         
-        # Run the main processing method from the backend, passing the callbacks
         corrections_made, detailed_results = corrector.process_file_v8(tmp_path, st.session_state.logger, progress_callbacks=callbacks)
         
         progress_bar.progress(100, text="✅ Process complete!")
@@ -79,7 +77,7 @@ def process_file_with_terms():
         
         st.session_state.processing_results = {
             'corrections_made': corrections_made, 'detailed_results': detailed_results,
-            'corrected_content': corrected_content, 'stats': corrector.processing_stats
+            'corrected_content': corrected_content, 'stats': corrector.processing_stats,
         }
         
         st.success(f"🎉 Process finished! {corrections_made} corrections were applied.")
@@ -144,7 +142,6 @@ def main():
                 try:
                     corrector = st.session_state.corrector
                     format_info = corrector.format_detector.detect_format(tmp_path)
-                    # **UPDATE 1: Store detected languages in session state**
                     source_lang, target_lang = corrector.detect_languages_with_fallback(tmp_path, st.session_state.logger)
                     st.session_state.detected_source_lang = source_lang
                     st.session_state.detected_target_lang = target_lang
@@ -159,10 +156,14 @@ def main():
 
     with tab2:
         st.header("🔤 Term Management")
-        # **UPDATE 1: Use detected languages as default values**
         col1, col2 = st.columns(2)
-        source_lang = col1.text_input("Source Language", value=st.session_state.get('detected_source_lang', 'en')).lower()
-        target_lang = col2.text_input("Target Language", value=st.session_state.get('detected_target_lang', 'tr')).lower()
+        
+        # --- FIX 1: Handle None values before calling .lower() ---
+        s_lang_val = st.session_state.get('detected_source_lang') or 'en'
+        t_lang_val = st.session_state.get('detected_target_lang') or 'tr'
+        
+        source_lang = col1.text_input("Source Language", value=s_lang_val).lower()
+        target_lang = col2.text_input("Target Language", value=t_lang_val).lower()
         
         with st.form("add_term_form", clear_on_submit=True):
             st.subheader("➕ Add New Term")
