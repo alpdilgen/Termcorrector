@@ -1,17 +1,17 @@
 import streamlit as st
+from dataclasses import asdict  # <-- THIS IS THE FIX
 import tempfile
 import os
 import json
 import pandas as pd
 from datetime import datetime
 import logging
+import traceback
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Ultimate Term Corrector V8", page_icon="🚀", layout="wide")
 
 # --- IMPORT BACKEND ---
-# This section tries to import the main class from the backend script.
-# Ensure your backend file is named 'ultimate_term_corrector.py'
 try:
     from ultimate_term_corrector import UltimateTermCorrectorV8, TermCorrection
     CORRECTOR_AVAILABLE = True
@@ -66,8 +66,10 @@ def process_file_with_terms():
         progress_bar.progress(80, text="📊 Preparing results...")
         
         # Read the corrected file content for download
-        with open(tmp_path, 'r', encoding='utf-8') as f:
-            corrected_content = f.read()
+        corrected_content = ""
+        if corrections_made > 0:
+            with open(tmp_path, 'r', encoding='utf-8') as f:
+                corrected_content = f.read()
         
         # Store results in session state for the results tab
         st.session_state.processing_results = {
@@ -87,7 +89,6 @@ def process_file_with_terms():
     finally:
         if 'tmp_path' in locals() and os.path.exists(tmp_path):
             os.unlink(tmp_path)
-
 
 # --- MAIN APP LAYOUT ---
 
@@ -116,7 +117,8 @@ def main():
 
         # Initialize Corrector
         if api_key:
-            if st.session_state.corrector is None:
+            # Re-initialize if the mode changes
+            if st.session_state.corrector is None or st.session_state.corrector.force_mode != st.session_state.force_mode:
                 try:
                     # Pass the force_mode selection during instantiation
                     st.session_state.corrector = UltimateTermCorrectorV8(api_key, force_mode=st.session_state.force_mode)
@@ -255,18 +257,20 @@ def main():
             st.subheader("📥 Downloads")
             c1, c2 = st.columns(2)
             
-            original_name = st.session_state.uploaded_file_info['name']
-            name_parts = os.path.splitext(original_name)
-            corrected_name = f"{name_parts[0]}_corrected{name_parts[1]}"
+            if res.get('corrected_content'):
+                original_name = st.session_state.uploaded_file_info['name']
+                name_parts = os.path.splitext(original_name)
+                corrected_name = f"{name_parts[0]}_corrected{name_parts[1]}"
+                
+                c1.download_button(
+                    label="📥 Download Corrected File",
+                    data=res['corrected_content'].encode('utf-8'),
+                    file_name=corrected_name,
+                    mime="application/xml",
+                    use_container_width=True
+                )
             
-            c1.download_button(
-                label="📥 Download Corrected File",
-                data=res['corrected_content'].encode('utf-8'),
-                file_name=corrected_name,
-                mime="application/xml",
-                use_container_width=True
-            )
-            
+            # Generate and offer the report for download
             report_json = json.dumps(res, indent=2, ensure_ascii=False, default=str)
             c2.download_button(
                 label="📊 Download JSON Report",
