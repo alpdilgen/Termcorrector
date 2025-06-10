@@ -979,7 +979,7 @@ class UltimateTermCorrectorV8:
         """Intelligent preprocessing to identify segments that need correction"""
         logger.info("🧠 Performing intelligent preprocessing...")
         relevant_units = []
-        term_patterns = [r'\b' + re.escape(term.source_term) + r'\b' for term in self.term_corrections]
+        term_patterns = [r'\b' + re.escape(term.source_term) for term in self.term_corrections]
         if not term_patterns:
             logger.warning("No terms provided for correction.")
             return []
