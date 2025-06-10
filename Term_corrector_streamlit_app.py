@@ -2,10 +2,20 @@
 """
 Universal Term Corrector - Streamlit Web Application
 ====================================================
-Doğru dosya ismi ile: Term_corrector_streamlit_app.py
+Düzeltilmiş versiyon - set_page_config sorunu çözüldü
 """
 
 import streamlit as st
+
+# CRITICAL: set_page_config MUST be the first Streamlit command
+st.set_page_config(
+    page_title="Universal Term Corrector",
+    page_icon="🌍",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Now import other modules
 import tempfile
 import os
 import json
@@ -13,29 +23,27 @@ import pandas as pd
 from datetime import datetime
 from typing import List, Dict, Tuple, Optional
 
-# ÇOKLU İMPORT DENEMESİ - En yaygın sorunları çözer
+# ÇOKLU İMPORT DENEMESİ - set_page_config'den SONRA
 corrector_imported = False
 UniversalTermCorrectorForce = None
 TermCorrection = None
 FileFormatInfo = None
+import_error_message = ""
 
 # Farklı import seçeneklerini dene
 try:
-    st.sidebar.info("Import deneniyor...")
     from universal_term_corrector import UniversalTermCorrectorForce, TermCorrection, FileFormatInfo
     corrector_imported = True
-    st.sidebar.success("✅ Tüm class'lar import edildi!")
+    import_error_message = "✅ Tüm class'lar başarıyla import edildi!"
 except ImportError as e:
-    st.sidebar.warning(f"Ana import başarısız: {e}")
+    import_error_message = f"Ana import başarısız: {e}"
     
     # Alternatif import denemeleri
     try:
         import universal_term_corrector as utc
-        st.sidebar.info("Modül import edildi, class'lar aranıyor...")
         
         # Class isimlerini bul
         module_contents = dir(utc)
-        st.sidebar.write(f"Modülde {len(module_contents)} öğe bulundu")
         
         # Ana corrector class'ını bul
         possible_names = [
@@ -48,13 +56,13 @@ except ImportError as e:
         for name in possible_names:
             if hasattr(utc, name):
                 UniversalTermCorrectorForce = getattr(utc, name)
-                st.sidebar.success(f"✅ Corrector bulundu: {name}")
+                import_error_message += f" | Corrector bulundu: {name}"
                 break
         
         # TermCorrection'ı bul veya oluştur
         if hasattr(utc, 'TermCorrection'):
             TermCorrection = getattr(utc, 'TermCorrection')
-            st.sidebar.success("✅ TermCorrection bulundu")
+            import_error_message += " | TermCorrection bulundu"
         else:
             from dataclasses import dataclass
             @dataclass
@@ -65,12 +73,12 @@ except ImportError as e:
                 target_language: str
                 description: str = ""
                 term_id: int = 0
-            st.sidebar.warning("⚠️ TermCorrection oluşturuldu")
+            import_error_message += " | TermCorrection oluşturuldu"
         
         # FileFormatInfo'yu bul veya oluştur
         if hasattr(utc, 'FileFormatInfo'):
             FileFormatInfo = getattr(utc, 'FileFormatInfo')
-            st.sidebar.success("✅ FileFormatInfo bulundu")
+            import_error_message += " | FileFormatInfo bulundu"
         else:
             from dataclasses import dataclass
             @dataclass
@@ -80,22 +88,14 @@ except ImportError as e:
                 namespaces: Dict[str, str]
                 special_features: List[str]
                 structure_type: str
-            st.sidebar.warning("⚠️ FileFormatInfo oluşturuldu")
+            import_error_message += " | FileFormatInfo oluşturuldu"
         
         if UniversalTermCorrectorForce:
             corrector_imported = True
-            st.sidebar.success("🎉 Corrector hazır!")
+            import_error_message = "🎉 Corrector hazır!"
             
     except Exception as e:
-        st.sidebar.error(f"Modül import edilemedi: {e}")
-
-# Page configuration
-st.set_page_config(
-    page_title="Universal Term Corrector",
-    page_icon="🌍",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+        import_error_message = f"Modül import edilemedi: {e}"
 
 # Custom CSS
 st.markdown("""
@@ -343,11 +343,15 @@ def main():
     with st.sidebar:
         st.header("⚙️ Yapılandırma")
         
-        # Import durumu göster
+        # Import durumu göster (artık sidebar'da güvenli)
         if corrector_imported:
             st.success("✅ Corrector modülü yüklendi")
         else:
             st.error("❌ Corrector modülü yüklenemedi")
+            
+        # Import detaylarını göster
+        with st.expander("🔍 Import Detayları"):
+            st.write(import_error_message)
             
             # Debug bilgisi göster
             if os.path.exists("universal_term_corrector.py"):
@@ -419,6 +423,31 @@ def main():
             <p>Lütfen dosyanın doğru olduğundan ve syntax hatası olmadığından emin olun.</p>
         </div>
         """, unsafe_allow_html=True)
+        
+        # Dosya listesi ve debug bilgisi
+        st.markdown("### 🔍 Dosya Analizi")
+        
+        if os.path.exists("universal_term_corrector.py"):
+            st.success("✅ universal_term_corrector.py dosyası mevcut")
+            
+            if st.checkbox("📄 Dosyanın ilk 50 satırını göster"):
+                try:
+                    with open("universal_term_corrector.py", "r", encoding="utf-8") as f:
+                        lines = f.readlines()
+                    
+                    st.code(''.join(lines[:50]), language="python")
+                    st.info(f"Toplam {len(lines)} satır")
+                    
+                except Exception as e:
+                    st.error(f"Dosya okunamadı: {e}")
+        else:
+            st.error("❌ universal_term_corrector.py dosyası bulunamadı")
+            
+        st.markdown("**Mevcut Python dosyaları:**")
+        for file in os.listdir("."):
+            if file.endswith('.py'):
+                st.write(f"📄 {file}")
+        
         return
     
     if not st.session_state.corrector:
