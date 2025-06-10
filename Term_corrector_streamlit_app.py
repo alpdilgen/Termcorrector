@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Universal Term Corrector - Streamlit Web Application (Minimal Version)
+Universal Term Corrector - Streamlit Web Application
 ====================================================
+Doğru dosya ismi ile: Term_corrector_streamlit_app.py
 """
 
 import streamlit as st
@@ -12,13 +13,81 @@ import pandas as pd
 from datetime import datetime
 from typing import List, Dict, Tuple, Optional
 
-# Import the corrector - DÜZELTME: Dosya ismini doğru kullanın
+# ÇOKLU İMPORT DENEMESİ - En yaygın sorunları çözer
+corrector_imported = False
+UniversalTermCorrectorForce = None
+TermCorrection = None
+FileFormatInfo = None
+
+# Farklı import seçeneklerini dene
 try:
+    st.sidebar.info("Import deneniyor...")
     from universal_term_corrector import UniversalTermCorrectorForce, TermCorrection, FileFormatInfo
-except ImportError:
-    st.error("❌ universal_term_corrector.py dosyası bulunamadı. Dosyanın aynı klasörde olduğundan emin olun.")
-    st.info("💡 Orijinal dosyanızı 'universal_term_corrector.py' olarak yeniden adlandırın.")
-    st.stop()
+    corrector_imported = True
+    st.sidebar.success("✅ Tüm class'lar import edildi!")
+except ImportError as e:
+    st.sidebar.warning(f"Ana import başarısız: {e}")
+    
+    # Alternatif import denemeleri
+    try:
+        import universal_term_corrector as utc
+        st.sidebar.info("Modül import edildi, class'lar aranıyor...")
+        
+        # Class isimlerini bul
+        module_contents = dir(utc)
+        st.sidebar.write(f"Modülde {len(module_contents)} öğe bulundu")
+        
+        # Ana corrector class'ını bul
+        possible_names = [
+            'UniversalTermCorrectorForce',
+            'UniversalTermCorrector', 
+            'TermCorrectorForce',
+            'TermCorrector'
+        ]
+        
+        for name in possible_names:
+            if hasattr(utc, name):
+                UniversalTermCorrectorForce = getattr(utc, name)
+                st.sidebar.success(f"✅ Corrector bulundu: {name}")
+                break
+        
+        # TermCorrection'ı bul veya oluştur
+        if hasattr(utc, 'TermCorrection'):
+            TermCorrection = getattr(utc, 'TermCorrection')
+            st.sidebar.success("✅ TermCorrection bulundu")
+        else:
+            from dataclasses import dataclass
+            @dataclass
+            class TermCorrection:
+                source_term: str
+                target_term: str
+                source_language: str
+                target_language: str
+                description: str = ""
+                term_id: int = 0
+            st.sidebar.warning("⚠️ TermCorrection oluşturuldu")
+        
+        # FileFormatInfo'yu bul veya oluştur
+        if hasattr(utc, 'FileFormatInfo'):
+            FileFormatInfo = getattr(utc, 'FileFormatInfo')
+            st.sidebar.success("✅ FileFormatInfo bulundu")
+        else:
+            from dataclasses import dataclass
+            @dataclass
+            class FileFormatInfo:
+                format_type: str
+                version: str
+                namespaces: Dict[str, str]
+                special_features: List[str]
+                structure_type: str
+            st.sidebar.warning("⚠️ FileFormatInfo oluşturuldu")
+        
+        if UniversalTermCorrectorForce:
+            corrector_imported = True
+            st.sidebar.success("🎉 Corrector hazır!")
+            
+    except Exception as e:
+        st.sidebar.error(f"Modül import edilemedi: {e}")
 
 # Page configuration
 st.set_page_config(
@@ -120,7 +189,7 @@ def detect_file_format(uploaded_file):
     
     try:
         corrector = st.session_state.corrector
-        if corrector:
+        if corrector and hasattr(corrector, 'detect_bilingual_format'):
             format_info = corrector.detect_bilingual_format(tmp_path)
             
             # Display format information
@@ -157,6 +226,9 @@ def detect_file_format(uploaded_file):
                     st.markdown(f"• {feature.replace('_', ' ').title()}")
             
             return format_info, tmp_path
+        else:
+            st.warning("⚠️ Format tespit özelliği bulunamadı. Basit işleme yapılacak.")
+            return None, tmp_path
         
     except Exception as e:
         st.error(f"❌ Format tespitinde hata: {str(e)}")
@@ -218,7 +290,11 @@ def process_file():
         logger.setLevel(logging.INFO)
         
         # Process the file
-        corrections_made, results = corrector.process_xliff_file(tmp_path, logger)
+        if hasattr(corrector, 'process_xliff_file'):
+            corrections_made, results = corrector.process_xliff_file(tmp_path, logger)
+        else:
+            st.error("❌ process_xliff_file metodu bulunamadı")
+            return
         
         progress_bar.progress(80)
         status_text.text("📊 Rapor oluşturuluyor...")
@@ -232,7 +308,7 @@ def process_file():
             'corrections_made': corrections_made,
             'detailed_results': results,
             'corrected_content': corrected_content,
-            'stats': corrector.processing_stats,
+            'stats': corrector.processing_stats if hasattr(corrector, 'processing_stats') else {},
             'original_filename': st.session_state.uploaded_file.name
         }
         
@@ -246,6 +322,7 @@ def process_file():
         
     except Exception as e:
         st.error(f"❌ Dosya işlenirken hata: {str(e)}")
+        st.exception(e)  # Detaylı hata göster
         progress_bar.progress(0)
         status_text.text("❌ İşlem başarısız")
 
@@ -266,6 +343,41 @@ def main():
     with st.sidebar:
         st.header("⚙️ Yapılandırma")
         
+        # Import durumu göster
+        if corrector_imported:
+            st.success("✅ Corrector modülü yüklendi")
+        else:
+            st.error("❌ Corrector modülü yüklenemedi")
+            
+            # Debug bilgisi göster
+            if os.path.exists("universal_term_corrector.py"):
+                st.info("📁 universal_term_corrector.py dosyası mevcut")
+                try:
+                    with open("universal_term_corrector.py", "r", encoding="utf-8") as f:
+                        content = f.read()
+                    st.write(f"📏 Boyut: {len(content)} karakter")
+                    
+                    # Class isimlerini bul
+                    import re
+                    classes = re.findall(r'class\s+(\w+)', content)
+                    if classes:
+                        st.write("🏗️ Bulunan class'lar:")
+                        for cls in classes[:5]:  # İlk 5'ini göster
+                            st.write(f"   - {cls}")
+                        if len(classes) > 5:
+                            st.write(f"   ... ve {len(classes) - 5} tane daha")
+                    else:
+                        st.warning("⚠️ Hiç class bulunamadı")
+                        
+                except Exception as e:
+                    st.error(f"Dosya okunamadı: {e}")
+            else:
+                st.error("📁 universal_term_corrector.py dosyası bulunamadı")
+                st.write("Mevcut dosyalar:")
+                for file in os.listdir("."):
+                    if file.endswith('.py'):
+                        st.write(f"   - {file}")
+        
         # API Key input
         api_key = st.text_input(
             "🔑 Claude API Anahtarı",
@@ -273,7 +385,7 @@ def main():
             help="Anthropic Claude API anahtarınızı girin"
         )
         
-        if api_key:
+        if api_key and corrector_imported:
             if st.session_state.corrector is None:
                 with st.spinner("Corrector başlatılıyor..."):
                     create_corrector(api_key)
@@ -299,6 +411,16 @@ def main():
         """)
     
     # Main content
+    if not corrector_imported:
+        st.markdown("""
+        <div class="error-box">
+            <h3>❌ Modül Yükleme Hatası</h3>
+            <p>universal_term_corrector.py dosyası bulunamadı veya yüklenemedi.</p>
+            <p>Lütfen dosyanın doğru olduğundan ve syntax hatası olmadığından emin olun.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        return
+    
     if not st.session_state.corrector:
         st.markdown("""
         <div class="warning-box">
@@ -482,15 +604,17 @@ def main():
                 """, unsafe_allow_html=True)
             
             with col2:
+                total_units = results['stats'].get('total_units', 0) if results['stats'] else 0
                 st.markdown(f"""
                 <div class="metric-card">
-                    <h3>{results['stats']['total_units']}</h3>
+                    <h3>{total_units}</h3>
                     <p>Toplam Birim</p>
                 </div>
                 """, unsafe_allow_html=True)
             
             with col3:
-                coverage_rate = (results['corrections_made'] / max(1, results['stats']['instances_found'])) * 100
+                instances_found = results['stats'].get('instances_found', 0) if results['stats'] else 0
+                coverage_rate = (results['corrections_made'] / max(1, instances_found)) * 100
                 st.markdown(f"""
                 <div class="metric-card">
                     <h3>{coverage_rate:.1f}%</h3>
